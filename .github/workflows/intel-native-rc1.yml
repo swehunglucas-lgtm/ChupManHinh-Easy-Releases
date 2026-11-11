@@ -1,0 +1,154 @@
+name: V2.4.1 Intel native acceptance smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: intel-native-v241-rc1
+  cancel-in-progress: false
+
+jobs:
+  intel-real-cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15-intel, macos-26-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Prove native Intel CPU, not Rosetta
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RUNNER_IMAGE=${{ matrix.runner }}"
+          echo "ARCH=$(uname -m)"
+          CPU=$(sysctl -n machdep.cpu.brand_string)
+          echo "CPU=$CPU"
+          echo "OS=$(sw_vers -productVersion)"
+          test "$(uname -m)" = "x86_64"
+          [[ "$CPU" == *"Intel"* ]] || { echo "FAIL: not genuine Intel CPU"; exit 1; }
+          echo "INTEL_HARDWARE_PROBE_PASS"
+
+      - name: Download the exact published RC1 DMG and verify SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq"
+          mkdir -p "$ROOT"
+          BASE="https://github.com/swehunglucas-lgtm/ChupManHinh-Easy-Releases/releases/download/v2.4.1-intel-rc1"
+          curl -fL --retry 3 --max-time 180 "$BASE/ChupManHinh-Easy-v2.4.1-macOS-Universal.dmg" -o "$ROOT/app.dmg"
+          curl -fL --retry 3 --max-time 60 "$BASE/SHA256SUMS-v2.4.1-intel-rc1.txt" -o "$ROOT/SHA256SUMS.txt"
+          EXPECTED="$(awk '{print $1}' "$ROOT/SHA256SUMS.txt")"
+          ACTUAL="$(shasum -a 256 "$ROOT/app.dmg" | awk '{print $1}')"
+          [[ "$EXPECTED" == "$ACTUAL" ]] || { echo "FAIL: Release checksum mismatch"; exit 1; }
+          echo "SIGNED_RELEASE_BYTES=$(stat -f '%z' "$ROOT/app.dmg")"
+          echo "PUBLISHED_RC1_HASH_MATCH_PASS"
+
+      - name: Mount DMG and verify both slices, helper and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq"
+          mkdir -p "$ROOT/mount"
+          hdiutil verify "$ROOT/app.dmg"
+          hdiutil attach "$ROOT/app.dmg" -readonly -nobrowse -mountpoint "$ROOT/mount"
+          APP="$ROOT/mount/Chup Man Hinh Nhanh.app"
+          test -f "$ROOT/mount/CAI-DAT-TREN-MAC.txt"
+          test ! -L "$ROOT/mount/Applications"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "2.4.1"
+          for EXEC in "$APP/Contents/MacOS/ScreenShotQuick" "$APP/Contents/Resources/ChupManHinhUninstaller"; do
+            ARCHS="$(lipo -archs "$EXEC")"
+            echo "$EXEC: $ARCHS"
+            [[ " $ARCHS " == *" x86_64 "* && " $ARCHS " == *" arm64 "* ]]
+            for ARCH in x86_64 arm64; do
+              vtool -show-build -arch "$ARCH" "$EXEC" | grep -q 'minos 13.0'
+            done
+          done
+          codesign --verify --deep --strict "$APP"
+          mkdir -p "$HOME/Applications"
+          ditto "$APP" "$HOME/Applications/Chup Man Hinh Nhanh.app"
+          hdiutil detach "$ROOT/mount"
+          codesign --verify --deep --strict "$HOME/Applications/Chup Man Hinh Nhanh.app"
+          echo "NATIVE_INTEL_INSTALL_PACKAGE_PASS"
+
+      - name: Native Intel runtime - app Studio, data restore and helper guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq"
+          APP="$HOME/Applications/Chup Man Hinh Nhanh.app"
+          BIN="$APP/Contents/MacOS/ScreenShotQuick"
+          export SSQ_SESSION_ROOT="$ROOT/sessions"
+          mkdir -p "$SSQ_SESSION_ROOT"
+          python3 - "$ROOT/fixture.png" <<'PY'
+          import struct, zlib, pathlib, sys
+          w,h=640,400
+          def chunk(tag,data):
+              return struct.pack('!I',len(data))+tag+data+struct.pack('!I',zlib.crc32(tag+data)&0xffffffff)
+          raw=b''.join(b'\x00'+b''.join(bytes(((x+y)%256,(x*2)%256,(y*3)%256)) for x in range(w)) for y in range(h))
+          png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('!2I5B',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+          pathlib.Path(sys.argv[1]).write_bytes(png)
+          PY
+          echo "RC1_BINARY=$(file "$BIN")"
+          "$BIN" --studio "$ROOT/fixture.png" >"$ROOT/studio.log" 2>&1 &
+          PID=$!
+          echo "STUDIO_PID=$PID"
+          sleep 8
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "FAIL: app terminated before Studio smoke test"; cat "$ROOT/studio.log"; exit 1
+          fi
+          test -s "$SSQ_SESSION_ROOT/latest" || { echo "FAIL: Studio has not saved demo session"; cat "$ROOT/studio.log"; exit 1; }
+          ID="$(cat "$SSQ_SESSION_ROOT/latest")"
+          test -s "$SSQ_SESSION_ROOT/$ID/session.json"
+          test -s "$SSQ_SESSION_ROOT/$ID/source.png"
+          sips -g pixelWidth -g pixelHeight "$SSQ_SESSION_ROOT/$ID/source.png"
+          echo "NATIVE_INTEL_APP_SESSION_PASS"
+          kill -TERM "$PID" || true
+          sleep 2
+          set +e
+          "$APP/Contents/Resources/ChupManHinhUninstaller" >"$ROOT/helper.log" 2>&1
+          RC=$?
+          set -e
+          test "$RC" -eq 2 || { echo "FAIL: invalid helper argument rejection"; cat "$ROOT/helper.log"; exit 1; }
+          grep -q 'Invalid uninstall arguments' "$ROOT/helper.log"
+          echo "NATIVE_INTEL_HELPER_GUARD_PASS"
+
+      - name: Optional GUI visibility probe (may be blocked by runner privacy controls)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq"
+          BIN="$HOME/Applications/Chup Man Hinh Nhanh.app/Contents/MacOS/ScreenShotQuick"
+          export SSQ_SESSION_ROOT="$ROOT/glass-sessions"
+          mkdir -p "$SSQ_SESSION_ROOT"
+          "$BIN" --glass-preview >"$ROOT/glass.log" 2>&1 &
+          PID=$!
+          sleep 6
+          kill -0 "$PID"
+          # Screen Recording authorization is controlled by macOS TCC.
+          # A failed screenshot does not prove an Intel architecture failure.
+          if screencapture -x "$ROOT/gui-probe.png" 2>"$ROOT/screenshot-privacy.log"; then
+            echo "RUNNER_SCREENSHOT_CAPTURED (visual review required)"
+          else
+            echo "GUI_SCREENSHOT_NOT_VERIFIED_TCC_OR_RUNNER_LIMITATION"
+          fi
+          kill -TERM "$PID" || true
+          echo "NATIVE_INTEL_GLASS_PROCESS_PASS"
+
+      - name: Upload CI evidence (logs only, no private source)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-rc1-evidence-${{ matrix.runner }}
+          path: |
+            ${{ runner.temp }}/ssq/studio.log
+            ${{ runner.temp }}/ssq/helper.log
+            ${{ runner.temp }}/ssq/glass.log
+            ${{ runner.temp }}/ssq/screenshot-privacy.log
+            ${{ runner.temp }}/ssq/gui-probe.png
+          if-no-files-found: ignore
+          retention-days: 7
