@@ -118,7 +118,7 @@ final class ScrollFixture:NSObject,NSApplicationDelegate {
     }
 }
 SWIFT
-swiftc "$ROOT/ScrollFixture.swift" -framework AppKit -o "$ROOT/ScrollFixture"
+swiftc -parse-as-library "$ROOT/ScrollFixture.swift" -framework AppKit -o "$ROOT/ScrollFixture"
 "$ROOT/ScrollFixture" >"$ROOT/fixture.log" 2>&1 &
 FIXTURE_PID=$!
 trap 'kill -TERM "$FIXTURE_PID" 2>/dev/null || true; kill -TERM "$APP_PID" 2>/dev/null || true' EXIT
