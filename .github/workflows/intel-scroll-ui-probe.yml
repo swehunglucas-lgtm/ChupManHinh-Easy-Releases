@@ -1,0 +1,112 @@
+name: V2.4.1 Intel native auto-scroll UI acceptance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  intel-scroll:
+    runs-on: macos-26-intel
+    timeout-minutes: 15
+    steps:
+      - name: Install the exact RC1 DMG
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          mkdir -p "$RUNNER_TEMP/scroll/mount" "$HOME/Applications"
+          BASE=https://github.com/swehunglucas-lgtm/ChupManHinh-Easy-Releases/releases/download/v2.4.1-intel-rc1
+          curl -fLsS --retry 3 "$BASE/ChupManHinh-Easy-v2.4.1-macOS-Universal.dmg" -o "$RUNNER_TEMP/scroll/rc.dmg"
+          curl -fLsS "$BASE/SHA256SUMS-v2.4.1-intel-rc1.txt" -o "$RUNNER_TEMP/scroll/hash.txt"
+          test "$(cut -d ' ' -f1 "$RUNNER_TEMP/scroll/hash.txt")" = "$(shasum -a 256 "$RUNNER_TEMP/scroll/rc.dmg" | cut -d ' ' -f1)"
+          hdiutil attach "$RUNNER_TEMP/scroll/rc.dmg" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/scroll/mount" >/dev/null
+          ditto "$RUNNER_TEMP/scroll/mount/Chup Man Hinh Nhanh.app" "$HOME/Applications/Chup Man Hinh Nhanh.app"
+          hdiutil detach "$RUNNER_TEMP/scroll/mount" -quiet
+          echo DMG_INSTALL_PASS
+      - name: Compile real scrollable AppKit target and AX UI driver
+        run: |
+          cat > "$RUNNER_TEMP/scroll/Target.swift" <<'SWIFT'
+          import AppKit
+          @main struct Target {
+            @MainActor static func main() {
+              let app=NSApplication.shared
+              app.setActivationPolicy(.regular)
+              let win=NSWindow(contentRect:NSRect(x:160,y:160,width:780,height:620),styleMask:[.titled,.closable,.resizable],backing:.buffered,defer:false)
+              win.title="INTEL_SCROLL_TEST_TARGET"
+              let scroll=NSScrollView(frame:NSRect(x:0,y:0,width:780,height:590))
+              scroll.hasVerticalScroller=true
+              scroll.autoresizingMask=[.width,.height]
+              let editor=NSTextView(frame:NSRect(x:0,y:0,width:730,height:14000))
+              editor.isEditable=false
+              editor.isSelectable=false
+              editor.font=NSFont.monospacedSystemFont(ofSize:15,weight:.medium)
+              editor.string=(1...320).map { "SCROLL_FRAME_ROW_\(String(format:"%04d",$0)) | unique data column \($0*$0) | Section \($0/12)\n" }.joined()
+              scroll.documentView=editor
+              win.contentView=scroll
+              win.makeKeyAndOrderFront(nil)
+              app.activate(ignoringOtherApps:true)
+              print("SCROLL_WINDOW_READY")
+              fflush(stdout)
+              app.run()
+            }
+          }
+          SWIFT
+          cat > "$RUNNER_TEMP/scroll/AX.swift" <<'SWIFT'
+          import AppKit
+          import ApplicationServices
+          import CoreGraphics
+          let trusted=AXIsProcessTrusted()
+          print("AX_DRIVER_TRUSTED=\(trusted)")
+          let running=NSRunningApplication.runningApplications(withBundleIdentifier:"local.hunglucas.screenshotquick")
+          print("APP_INSTANCES=\(running.count)")
+          if let app=running.first {
+            let root=AXUIElementCreateApplication(app.processIdentifier)
+            func value(_ e:AXUIElement,_ k:CFString)->Any? {
+              var out:CFTypeRef?
+              let err=AXUIElementCopyAttributeValue(e,k,&out)
+              return err == .success ? out : nil
+            }
+            func walk(_ e:AXUIElement,_ depth:Int) {
+              guard depth<=14 else{return}
+              let role=value(e,kAXRoleAttribute as CFString).map{String(describing:$0)} ?? ""
+              let title=value(e,kAXTitleAttribute as CFString).map{String(describing:$0)} ?? ""
+              let desc=value(e,kAXDescriptionAttribute as CFString).map{String(describing:$0)} ?? ""
+              let val=value(e,kAXValueAttribute as CFString).map{String(describing:$0)} ?? ""
+              if (!title.isEmpty || !desc.isEmpty || role=="AXButton" || role=="AXPopUpButton") {
+                print("AX depth=\(depth) role=\(role) title=\(title.prefix(120)) desc=\(desc.prefix(100)) value=\(val.prefix(100))")
+              }
+              if let children=value(e,kAXChildrenAttribute as CFString) as? [AXUIElement] {
+                for child in children.prefix(70){walk(child,depth+1)}
+              }
+            }
+            walk(root,0)
+          }
+          print("AX_INSPECTION_COMPLETE")
+          SWIFT
+          swiftc -parse-as-library "$RUNNER_TEMP/scroll/Target.swift" -o "$RUNNER_TEMP/scroll/Target" -framework AppKit
+          swiftc "$RUNNER_TEMP/scroll/AX.swift" -o "$RUNNER_TEMP/scroll/AX" -framework AppKit -framework ApplicationServices
+      - name: Launch real target and UI; inspect TCC and AX
+        run: |
+          set -e
+          ROOT="$RUNNER_TEMP/scroll"
+          "$ROOT/Target" >"$ROOT/target.log" 2>&1 &
+          target_pid=$!
+          export SSQ_SESSION_ROOT="$ROOT/sessions"
+          mkdir -p "$SSQ_SESSION_ROOT"
+          "$HOME/Applications/Chup Man Hinh Nhanh.app/Contents/MacOS/ScreenShotQuick" --glass-preview >"$ROOT/app.log" 2>&1 &
+          app_pid=$!
+          sleep 9
+          kill -0 "$target_pid" && echo REAL_SCROLL_TARGET_ALIVE
+          kill -0 "$app_pid" && echo INTEL_RC1_POPUP_ALIVE
+          "$ROOT/AX" >"$ROOT/ax-tree.log" 2>&1 || true
+          tail -90 "$ROOT/ax-tree.log"
+          screencapture -x "$ROOT/before.png" 2>"$ROOT/screen.log" || true
+          echo 'GUI_ACCESSIBILITY_PROBED_SCROLL_NOT_CLAIMED'
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-native-scroll-ui-probe
+          path: |
+            ${{ runner.temp }}/scroll/*.log
+            ${{ runner.temp }}/scroll/before.png
+          if-no-files-found: ignore
+          retention-days: 7
