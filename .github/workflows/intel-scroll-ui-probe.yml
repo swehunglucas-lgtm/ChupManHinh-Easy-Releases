@@ -80,9 +80,24 @@ jobs:
             func findAndPress(_ e:AXUIElement)->Bool {
               let desc=value(e,kAXDescriptionAttribute as CFString).map {String(describing:$0)} ?? ""
               if desc=="Tự cuộn toàn bộ trang" {
-                let result=AXUIElementPerformAction(e,kAXPressAction as CFString)
-                print("SCROLL_BUTTON_AX_PRESS_RESULT=\(result.rawValue)")
-                return result == .success
+                guard let pos=value(e,kAXPositionAttribute as CFString) as? AXValue,
+                      let size=value(e,kAXSizeAttribute as CFString) as? AXValue else {
+                  print("SCROLL_BUTTON_LOCATION_MISSING");return false
+                }
+                var origin=CGPoint.zero
+                var dimensions=CGSize.zero
+                AXValueGetValue(pos,.cgPoint,&origin)
+                AXValueGetValue(size,.cgSize,&dimensions)
+                let center=CGPoint(x:origin.x+dimensions.width/2,
+                                   y:origin.y+dimensions.height/2)
+                print("SCROLL_BUTTON_CLICK_CENTER=\(center)")
+                for type:CGEventType in [.mouseMoved,.leftMouseDown,.leftMouseUp] {
+                  CGEvent(mouseEventSource:nil,mouseType:type,
+                          mouseCursorPosition:center,mouseButton:.left)?
+                    .post(tap:.cghidEventTap)
+                  Thread.sleep(forTimeInterval:0.10)
+                }
+                return true
               }
               if let children=value(e,kAXChildrenAttribute as CFString) as? [AXUIElement] {
                 for child in children { if findAndPress(child) { return true } }
