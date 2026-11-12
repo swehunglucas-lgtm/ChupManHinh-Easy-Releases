@@ -113,9 +113,21 @@ jobs:
           kill -0 "$target_pid" && echo REAL_SCROLL_TARGET_ALIVE
           kill -0 "$app_pid" && echo INTEL_RC1_POPUP_ALIVE
           "$ROOT/AX" >"$ROOT/ax-tree.log" 2>&1 || true
-          "$ROOT/AX" press-scroll >"$ROOT/press-scroll.log" 2>&1 || true
-          sleep 2
-          "$ROOT/AX" >"$ROOT/modal-tree.log" 2>&1 || true
+          "$ROOT/AX" press-scroll >"$ROOT/press-scroll.log" 2>&1 &
+          press_pid=$!
+          sleep 8
+          if kill -0 "$press_pid" 2>/dev/null; then
+            echo "AX_PRESS_BLOCKED_WAITING_FOR_MODAL" >>"$ROOT/press-scroll.log"
+            kill -TERM "$press_pid" 2>/dev/null || true
+          fi
+          sleep 1
+          "$ROOT/AX" >"$ROOT/modal-tree.log" 2>&1 &
+          modal_pid=$!
+          sleep 5
+          if kill -0 "$modal_pid" 2>/dev/null; then
+            echo "AX_MODAL_READ_TIMEOUT" >>"$ROOT/modal-tree.log"
+            kill -TERM "$modal_pid" 2>/dev/null || true
+          fi
           grep -E 'AXWindow|AXButton|AXPopUpButton|AXMenuItem|INTEL_SCROLL|cuộn|Bắt đầu|Hủy' "$ROOT/modal-tree.log" | head -90 || true
           cat "$ROOT/press-scroll.log"
           screencapture -x "$ROOT/before.png" 2>"$ROOT/screen.log" || true
