@@ -87,7 +87,7 @@ import Foundation
 let appPID=pid_t(Int(CommandLine.arguments[1]) ?? -1)
 guard appPID>0 else { exit(2) }
 let app=AXUIElementCreateApplication(appPID)
-AXUIElementSetMessagingTimeout(app, 5)
+AXUIElementSetMessagingTimeout(app, 0.4)
 var traversed=0
 var found=0
 var pressed=false
@@ -97,7 +97,7 @@ func attr(_ element:AXUIElement,_ name:CFString)->CFTypeRef? {
     return result
 }
 func walk(_ element:AXUIElement,_ depth:Int) {
-    guard depth<16, traversed<1200, !pressed else {return}
+    guard depth<12, traversed<180, !pressed else {return}
     traversed+=1
     let fields:[CFString]=[kAXRoleAttribute as CFString,kAXTitleAttribute as CFString,kAXDescriptionAttribute as CFString,kAXHelpAttribute as CFString]
     let labels=fields.compactMap { attr(element,$0) as? String }
@@ -117,7 +117,18 @@ print("AX_NODES=\(traversed) MATCHES=\(found) PRESSED=\(pressed)")
 exit(pressed ? 0 : 4)
 SWIFT
 swiftc "$ROOT/ax-press.swift" -framework AppKit -o "$ROOT/ax-press"
-if "$ROOT/ax-press" "$APP_PID" >"$ROOT/ax-press.log" 2>&1; then
+if python3 - "$ROOT" "$APP_PID" <<'PY'
+import pathlib,subprocess,sys
+root=pathlib.Path(sys.argv[1])
+try:
+    r=subprocess.run([str(root/'ax-press'),sys.argv[2]],capture_output=True,timeout=12)
+    (root/'ax-press.log').write_bytes(r.stdout+r.stderr)
+    sys.exit(0 if r.returncode==0 else 4)
+except subprocess.TimeoutExpired as e:
+    (root/'ax-press.log').write_bytes(b'AX_ENUMERATION_TIMED_OUT_AT_12_SECONDS\n')
+    sys.exit(4)
+PY
+then
   say "AX_SCROLL_BUTTON=PRESS_SUCCESS"
 else
   say "AX_SCROLL_BUTTON=NOT_PRESSABLE_FALLBACK_QUARTZ"
