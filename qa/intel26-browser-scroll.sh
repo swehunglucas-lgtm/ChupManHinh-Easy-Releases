@@ -99,7 +99,7 @@ func attr(_ element:AXUIElement,_ name:CFString)->CFTypeRef? {
 func walk(_ element:AXUIElement,_ depth:Int) {
     guard depth<16, traversed<1200, !pressed else {return}
     traversed+=1
-    let fields=[kAXRoleAttribute,kAXTitleAttribute,kAXDescriptionAttribute,kAXHelpAttribute]
+    let fields:[CFString]=[kAXRoleAttribute as CFString,kAXTitleAttribute as CFString,kAXDescriptionAttribute as CFString,kAXHelpAttribute as CFString]
     let labels=fields.compactMap { attr(element,$0) as? String }
     if labels.joined(separator:" ").contains("Tự cuộn toàn bộ trang") {
         found+=1
