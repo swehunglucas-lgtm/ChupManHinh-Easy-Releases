@@ -35,13 +35,13 @@ jobs:
           for i in range(105):
               r,g,b=((i*37+41)%170+48,(i*71+23)%170+48,(i*53+67)%170+48)
               bars=''.join(f'<span style="display:inline-block;width:8px;height:91px;margin-right:2px;background:rgba({0 if ((i*917+bit*613+(i>>2)*149)&(1<<(bit%9))) else 255},{0 if ((i*917+bit*613+(i>>2)*149)&(1<<(bit%9))) else 255},{0 if ((i*917+bit*613+(i>>2)*149)&(1<<(bit%9))) else 255},0.5)"></span>' for bit in range(8))
-              rows.append(f'<div style="position:relative;height:108px;width:100%;box-sizing:border-box;background:rgb({r},{g},{b});border-bottom:2px solid rgba(0,0,0,0.2)"><div style="position:absolute;left:20px;top:6px">{bars}</div><strong style="position:absolute;left:250px;top:34px;font:15px monospace;color:black">SSQ-INTEL-ROW-{i:03d} verified page row index {i}</strong></div>')
+              rows.append(f'<div id="r{i:03d}" style="position:relative;height:108px;width:100%;box-sizing:border-box;background:rgb({r},{g},{b});border-bottom:2px solid rgba(0,0,0,0.2)"><div style="position:absolute;left:20px;top:6px">{bars}</div><strong style="position:absolute;left:250px;top:34px;font:15px monospace;color:black">SSQ-INTEL-ROW-{i:03d} verified page row index {i}</strong></div>')
           html='<!doctype html><html><head><meta charset="utf-8"><title>SSQ INTEL COLOR ROW LONG PAGE</title><style>html{scroll-behavior:auto;}body{margin:0;padding:0;overflow-y:scroll;}</style></head><body>'+''.join(rows)+'</body></html>'
           pathlib.Path(sys.argv[1]).write_text(html,encoding='utf-8')
           PY
           CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
           test -x "$CHROME"
-          "$CHROME" --user-data-dir="$ROOT/chrome-profile" --no-first-run --no-default-browser-check --disable-background-networking --window-size=1060,810 --window-position=100,80 --new-window "file://$ROOT/long-page.html" >"$ROOT/chrome.log" 2>&1 &
+          "$CHROME" --user-data-dir="$ROOT/chrome-profile" --no-first-run --no-default-browser-check --disable-background-networking --window-size=1060,810 --window-position=100,80 --new-window "file://$ROOT/long-page.html#r020" >"$ROOT/chrome.log" 2>&1 &
           echo $! > "$ROOT/chrome.pid"
           sleep 8
           swift -e 'import AppKit;import CoreGraphics;for e in (CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]] ?? []) {let n=e[kCGWindowName as String] as? String ?? "";if n.contains("SSQ INTEL COLOR ROW LONG PAGE"){print("CHROME_TEST_WINDOW_FOUND",n,e[kCGWindowBounds as String] ?? "")}}' | tee "$ROOT/window.log"
@@ -66,6 +66,7 @@ jobs:
           log=(root/'qa.log').read_text(errors='replace')
           print(log[-12000:])
           if p.returncode!=0 or 'QA_FINAL_STATUS=PASS' not in log:
+              print('REAL_SCROLL_NOT_VERIFIED_MIDPAGE; no workaround considered PASS')
               raise SystemExit('NOT_PASS: engine did not create a verified multi-frame PNG')
           assert log.count('ENGINE_CAPTURED_FRAME=')>=3
           png=root/'REAL-Intel-Scroll-RC1.png'
