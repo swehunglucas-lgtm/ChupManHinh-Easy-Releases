@@ -77,7 +77,23 @@ jobs:
                 for child in children.prefix(70){walk(child,depth+1)}
               }
             }
-            walk(root,0)
+            func findAndPress(_ e:AXUIElement)->Bool {
+              let desc=value(e,kAXDescriptionAttribute as CFString).map {String(describing:$0)} ?? ""
+              if desc=="Tự cuộn toàn bộ trang" {
+                let result=AXUIElementPerformAction(e,kAXPressAction as CFString)
+                print("SCROLL_BUTTON_AX_PRESS_RESULT=\(result.rawValue)")
+                return result == .success
+              }
+              if let children=value(e,kAXChildrenAttribute as CFString) as? [AXUIElement] {
+                for child in children { if findAndPress(child) { return true } }
+              }
+              return false
+            }
+            if CommandLine.arguments.contains("press-scroll") {
+              print("SCROLL_BUTTON_FOUND_AND_PRESSED=\(findAndPress(root))")
+            } else {
+              walk(root,0)
+            }
           }
           print("AX_INSPECTION_COMPLETE")
           SWIFT
@@ -97,9 +113,13 @@ jobs:
           kill -0 "$target_pid" && echo REAL_SCROLL_TARGET_ALIVE
           kill -0 "$app_pid" && echo INTEL_RC1_POPUP_ALIVE
           "$ROOT/AX" >"$ROOT/ax-tree.log" 2>&1 || true
-          tail -90 "$ROOT/ax-tree.log"
+          "$ROOT/AX" press-scroll >"$ROOT/press-scroll.log" 2>&1 || true
+          sleep 2
+          "$ROOT/AX" >"$ROOT/modal-tree.log" 2>&1 || true
+          grep -E 'AXWindow|AXButton|AXPopUpButton|AXMenuItem|INTEL_SCROLL|cuộn|Bắt đầu|Hủy' "$ROOT/modal-tree.log" | head -90 || true
+          cat "$ROOT/press-scroll.log"
           screencapture -x "$ROOT/before.png" 2>"$ROOT/screen.log" || true
-          echo 'GUI_ACCESSIBILITY_PROBED_SCROLL_NOT_CLAIMED'
+          echo 'SCROLL_DIALOG_INSPECTED_NO_E2E_PASS_YET'
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
