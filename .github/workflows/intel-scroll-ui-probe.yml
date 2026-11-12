@@ -93,11 +93,18 @@ jobs:
                 let center=CGPoint(x:origin.x+dimensions.width/2,
                                    y:origin.y+dimensions.height/2)
                 print("SCROLL_BUTTON_CLICK_CENTER=\(center)")
-                for type:CGEventType in [.mouseMoved,.leftMouseDown,.leftMouseUp] {
-                  CGEvent(mouseEventSource:nil,mouseType:type,
-                          mouseCursorPosition:center,mouseButton:.left)?
-                    .post(tap:.cghidEventTap)
-                  Thread.sleep(forTimeInterval:0.10)
+                let activated=app.activate(options:[])
+                print("APP_ACTIVATED_FOR_CLICK=\(activated)")
+                Thread.sleep(forTimeInterval:0.7)
+                for attempt in 1...2 {
+                  for type:CGEventType in [.mouseMoved,.leftMouseDown,.leftMouseUp] {
+                    CGEvent(mouseEventSource:nil,mouseType:type,
+                            mouseCursorPosition:center,mouseButton:.left)?
+                      .post(tap:.cghidEventTap)
+                    Thread.sleep(forTimeInterval:0.15)
+                  }
+                  print("CLICK_ATTEMPT=\(attempt)")
+                  Thread.sleep(forTimeInterval:0.7)
                 }
                 return true
               }
