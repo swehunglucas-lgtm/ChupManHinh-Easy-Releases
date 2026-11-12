@@ -22,9 +22,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ssq-native-engine"
           cd "$RUNNER_TEMP/ssq-native-engine"
           BASE='https://github.com/swehunglucas-lgtm/ChupManHinh-Easy-Releases/releases/download/qa-v241-scroll-engine-20261112'
-          curl -fsSL --retry 3 "$BASE/SSQ-Intel-Native-Scroll-Engine-QA.zip" -o qa.zip
-          curl -fsSL --retry 3 "$BASE/SHA256SUMS.txt" -o SHA256SUMS.txt
-          test "$(shasum -a 256 qa.zip | awk '{print $1}')" = "$(awk '{print $1}' SHA256SUMS.txt)"
+          curl -fsSL --retry 3 "$BASE/SSQ-Intel-Native-Scroll-Engine-QA-v2.zip" -o qa.zip
+          curl -fsSL --retry 3 "$BASE/SHA256SUMS-v2.txt" -o SHA256SUMS-v2.txt
+          test "$(shasum -a 256 qa.zip | awk '{print $1}')" = "$(awk '{print $1}' SHA256SUMS-v2.txt)"
           unzip -q qa.zip
           codesign --verify --strict ./SSQIntelScrollNativeHarness
           test "$(lipo -archs ./SSQIntelScrollNativeHarness)" = x86_64
