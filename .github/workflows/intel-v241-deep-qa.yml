@@ -1,0 +1,39 @@
+name: V2.4.1 RC1 native Intel graphics and capture diagnostics
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: intel-v241-deep-qa
+  cancel-in-progress: false
+jobs:
+  gpu-baseline-macos15:
+    runs-on: macos-15-intel
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Independent SwiftUI Canvas + Metal runner control
+        run: bash qa/intel15-metal-baseline.sh
+      - name: Upload macOS 15 diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel15-metal-baseline
+          path: ${{ runner.temp }}/intel15-gpu/
+          retention-days: 7
+          if-no-files-found: ignore
+  permissions-and-scroll-macos26:
+    runs-on: macos-26-intel
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Actual RC1 app Screen Recording and Accessibility/scroll tests
+        run: bash qa/intel26-capture-check.sh
+      - name: Upload native Intel capture evidence and explicit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel26-app-capture-scroll-evidence
+          path: ${{ runner.temp }}/intel26-e2e/
+          retention-days: 7
+          if-no-files-found: ignore
