@@ -1,0 +1,88 @@
+name: V2.4.1 Intel scroll wheel direction control
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wheel:
+    runs-on: macos-26-intel
+    timeout-minutes: 9
+    steps:
+      - name: Start native Chrome with 60 numbered colored rows at mid-page
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          ROOT="$RUNNER_TEMP/ssq-wheel"
+          mkdir -p "$ROOT"
+          python3 - "$ROOT/page.html" <<'PY'
+          import pathlib,sys
+          html=['<!doctype html><html><head><title>SSQ DIRECTION CONTROL</title><meta charset="utf-8"></head><body style="margin:0">']
+          for i in range(60):
+              red,green,blue=(i*37+41)%170+48,(i*71+23)%170+48,(i*53+67)%170+48
+              html.append(f'<section id="r{i:03d}" style="height:108px;box-sizing:border-box;background:rgb({red},{green},{blue});padding:32px;font:20px monospace">PAGE-DIRECTION-ROW-{i:03d}</section>')
+          pathlib.Path(sys.argv[1]).write_text(''.join(html)+'</body></html>')
+          PY
+          CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+          "$CHROME" --user-data-dir="$ROOT/chrome-profile" --no-first-run --no-default-browser-check --disable-background-networking --window-size=1060,810 --window-position=100,80 --new-window "file://$ROOT/page.html#r020" >"$ROOT/chrome.log" 2>&1 &
+          sleep 8
+          echo "CHROME_PID_STARTED"
+      - name: Native HID wheel +4 and -4 independent control; screen evidence
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq-wheel"
+          cat > "$ROOT/Wheel.swift" <<'SWIFT'
+          import AppKit
+          import CoreGraphics
+          import ApplicationServices
+          import Foundation
+          let wins=CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]] ?? []
+          guard let e=wins.first(where:{($0[kCGWindowName as String] as? String ?? "").contains("SSQ DIRECTION CONTROL")}),
+                let n=e[kCGWindowNumber as String] as? Int,
+                let pid=e[kCGWindowOwnerPID as String] as? Int,
+                let d=e[kCGWindowBounds as String] as? [String:Any],
+                let rect=CGRect(dictionaryRepresentation:d as CFDictionary) else {fatalError("Chrome window missing")}
+          let output=CommandLine.arguments[1],id=CGWindowID(n),point=CGPoint(x:rect.midX,y:rect.midY)
+          print("WINDOW_ID=\(id) CENTER=\(point) AX=\(AXIsProcessTrusted()) SCREEN=\(CGPreflightScreenCaptureAccess())")
+          fflush(stdout)
+          func save(_ name:String) {
+              let task=Process()
+              task.executableURL=URL(fileURLWithPath:"/usr/sbin/screencapture")
+              task.arguments=["-x","-o","-l",String(id),output+"/"+name+".png"]
+              try! task.run();task.waitUntilExit()
+              print("CAPTURE_\(name)_EXIT=\(task.terminationStatus)")
+              fflush(stdout)
+          }
+          save("before")
+          let active=NSRunningApplication(processIdentifier:pid_t(pid))?.activate(options:[]) ?? false
+          print("ACTIVATE_CHROME=\(active)")
+          Thread.sleep(forTimeInterval:0.6)
+          for (delta,label) in [(Int32(4),"plus4"),(-4,"minus4")] {
+            let event=CGEvent(scrollWheelEvent2Source:nil,units:.line,wheelCount:1,wheel1:delta,wheel2:0,wheel3:0)!
+            event.location=point
+            event.post(tap:.cghidEventTap)
+            print("POSTED_DELTA_\(delta)")
+            Thread.sleep(forTimeInterval:1.1)
+            save(label)
+          }
+          print("WHEEL_EVENTS_SENT")
+          SWIFT
+          swiftc "$ROOT/Wheel.swift" -o "$ROOT/Wheel" -framework AppKit -framework ApplicationServices -framework CoreGraphics
+          "$ROOT/Wheel" "$ROOT" | tee "$ROOT/result.log"
+          for name in before plus4 minus4; do
+            test -s "$ROOT/$name.png"
+            shasum -a 256 "$ROOT/$name.png"
+            sips -g pixelWidth -g pixelHeight "$ROOT/$name.png" | tail -2
+          done
+          echo 'WHEEL_DIRECTION_CONTROL_RUN_COMPLETE_NOT_AUTOSCROLL_PASS'
+      - name: Save three real Intel window images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-intel-hid-wheel-direction
+          path: |
+            ${{ runner.temp }}/ssq-wheel/result.log
+            ${{ runner.temp }}/ssq-wheel/before.png
+            ${{ runner.temp }}/ssq-wheel/plus4.png
+            ${{ runner.temp }}/ssq-wheel/minus4.png
+          if-no-files-found: ignore
+          retention-days: 10
