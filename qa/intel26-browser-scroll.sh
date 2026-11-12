@@ -161,3 +161,7 @@ else
   fi
 fi
 say "BROWSER_INTEL_QA_COMPLETE"
+if ! grep -q "APP_AUTOSCROLL_CHROME=PASS_IMAGE_CREATED_HEIGHT_GT_1500" "$REPORT"; then
+  echo "ACCEPTANCE_FAIL: no verified stitched long PNG from actual RC1" >&2
+  exit 7
+fi
