@@ -1,0 +1,75 @@
+name: V2.4.1 Native Intel real scroll engine E2E
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-intel-scroll-engine:
+    runs-on: macos-26-intel
+    timeout-minutes: 14
+    steps:
+      - name: Confirm native Intel CPU and macOS
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          CPU="$(sysctl -n machdep.cpu.brand_string)"
+          [[ "$CPU" == *Intel* ]]
+          echo "NATIVE_INTEL_CPU=$CPU"
+          sw_vers -productVersion
+      - name: Download separate QA executable compiled from unchanged RC1 scroll engine
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ssq-native-engine"
+          cd "$RUNNER_TEMP/ssq-native-engine"
+          BASE='https://github.com/swehunglucas-lgtm/ChupManHinh-Easy-Releases/releases/download/qa-v241-scroll-engine-20261112'
+          curl -fsSL --retry 3 "$BASE/SSQ-Intel-Native-Scroll-Engine-QA.zip" -o qa.zip
+          curl -fsSL --retry 3 "$BASE/SHA256SUMS.txt" -o SHA256SUMS.txt
+          test "$(shasum -a 256 qa.zip | awk '{print $1}')" = "$(awk '{print $1}' SHA256SUMS.txt)"
+          unzip -q qa.zip
+          codesign --verify --strict ./SSQIntelScrollNativeHarness
+          test "$(lipo -archs ./SSQIntelScrollNativeHarness)" = x86_64
+          cat BUILD-PROVENANCE.txt
+          echo 'QA_BINARY_VERIFIED_UNCHANGED_RC1_SOURCES'
+      - name: Real NSScrollView wheel events + real screencapture frames + stitched PNG validation
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq-native-engine"
+          export SSQ_QA_DIR="$ROOT"
+          python3 - "$ROOT" <<'PY'
+          import pathlib,subprocess,sys
+          root=pathlib.Path(sys.argv[1])
+          out=root/'live-run.log'
+          with out.open('wb') as log:
+              try:
+                  result=subprocess.run([str(root/'SSQIntelScrollNativeHarness')],
+                        cwd=root,stdout=log,stderr=subprocess.STDOUT,timeout=160)
+              except subprocess.TimeoutExpired:
+                  print('QA_TIMEOUT_160S')
+                  print(out.read_text(errors='replace')[-9000:])
+                  raise SystemExit(1)
+          text=out.read_text(errors='replace')
+          print(text[-10000:])
+          if result.returncode!=0 or 'QA_FINAL_STATUS=PASS' not in text:
+              print('QA_NOT_PASS: no real stitched output verified')
+              raise SystemExit(1)
+          if text.count('ENGINE_CAPTURED_FRAME=') < 3:
+              raise SystemExit('FAIL: fewer than 3 real captured frames')
+          image=root/'REAL-Intel-Scroll-RC1.png'
+          if not image.is_file() or image.stat().st_size<25000:
+              raise SystemExit('FAIL: no substantial real output PNG')
+          print('NATIVE_INTEL_REAL_SCROLL_PNG_PASS')
+          PY
+          sips -g pixelWidth -g pixelHeight "$ROOT/REAL-Intel-Scroll-RC1.png"
+          shasum -a 256 "$ROOT/REAL-Intel-Scroll-RC1.png" > "$ROOT/OUTPUT-SHA256.txt"
+      - name: Retain logs and actual PNG for visual QA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-intel-real-scroll-engine-png
+          path: |
+            ${{ runner.temp }}/ssq-native-engine/live-run.log
+            ${{ runner.temp }}/ssq-native-engine/REAL-Intel-Scroll-RC1.png
+            ${{ runner.temp }}/ssq-native-engine/OUTPUT-SHA256.txt
+            ${{ runner.temp }}/ssq-native-engine/BUILD-PROVENANCE.txt
+          if-no-files-found: ignore
+          retention-days: 10
