@@ -125,18 +125,40 @@ trap 'kill -TERM "$FIXTURE_PID" 2>/dev/null || true; kill -TERM "$APP_PID" 2>/de
 sleep 4
 kill -0 "$FIXTURE_PID"
 say "SCROLL_TARGET_WINDOW=PROCESS_RUNNING"
-# Test the app's actual button. A denied Accessibility grant must remain a blocker,
-# never be bypassed by editing privacy databases.
-osascript <<'OSA' >"$ROOT/scroll-button.log" 2>&1 || true
-tell application "System Events"
-  tell process "ScreenShotQuick"
-    click button "Tự cuộn toàn bộ trang" of window "Chụp Màn Hình Easy — Glass Preview"
-  end tell
-end tell
-OSA
+# Studio may be in front after the main-screen capture; raise a fresh real
+# Glass Preview window from the *existing app instance*. Never call a mock.
+"$BIN" --glass-preview >"$ROOT/reshow-glass.log" 2>&1 || true
 sleep 3
-cat "$ROOT/scroll-button.log" || true
-# When possible, confirm the default fixture selection in the modal and press Start.
+cat >"$ROOT/click-native-glass.swift" <<'SWIFT'
+import AppKit
+import CoreGraphics
+import Foundation
+let windows=CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],
+    kCGNullWindowID) as? [[String:Any]] ?? []
+guard let item=windows.first(where:{
+    ($0[kCGWindowName as String] as? String ?? "").contains("Glass Preview")
+}), let dictionary=item[kCGWindowBounds as String] as? [String:Any],
+    let rect=CGRect(dictionaryRepresentation:dictionary as CFDictionary) else {
+    fputs("GLASS_WINDOW_NOT_FOUND\n",stderr)
+    exit(3)
+}
+// The "Tự cuộn toàn bộ trang" tile is 270pt below the real window origin.
+// The click location is relative to bounds returned by Quartz, not a fixed
+// screenshot coordinate; this works with moving displays/window positions.
+let point=CGPoint(x:rect.midX,y:rect.minY+270)
+print("GLASS_BOUNDS=\(rect)")
+print("CLICK_POINT=\(point)")
+for kind in [CGEventType.mouseMoved,.leftMouseDown,.leftMouseUp] {
+    CGEvent(mouseEventSource:nil,mouseType:kind,mouseCursorPosition:point,
+            mouseButton:.left)?.post(tap:.cghidEventTap)
+    Thread.sleep(forTimeInterval:0.14)
+}
+SWIFT
+swiftc "$ROOT/click-native-glass.swift" -framework AppKit -o "$ROOT/click-native-glass"
+"$ROOT/click-native-glass" >"$ROOT/click.log" 2>&1 || true
+cat "$ROOT/click.log"
+sleep 2
+screencapture -x "$ROOT/scroll-modal-before-start.png" 2>/dev/null || true
 osascript <<'OSA' >"$ROOT/scroll-start.log" 2>&1 || true
 tell application "System Events"
   tell process "ScreenShotQuick"
@@ -145,7 +167,13 @@ tell application "System Events"
   end tell
 end tell
 OSA
-sleep 14
+# The real scroll engine may take more than ten seconds as it joins frames.
+for i in $(seq 1 26); do
+  if find "$PHOTO_DIR" -maxdepth 1 -name 'ChupManHinhEasy-TuCuon-*.png' -type f -print -quit 2>/dev/null | grep -q .; then
+    break
+  fi
+  sleep 3
+done
 SCROLL="$(find "$PHOTO_DIR" -maxdepth 1 -name 'ChupManHinhEasy-TuCuon-*.png' -type f -print -quit 2>/dev/null || true)"
 if test -n "$SCROLL" && test -s "$SCROLL"; then
   cp "$SCROLL" "$ROOT/real-auto-scroll.png"
