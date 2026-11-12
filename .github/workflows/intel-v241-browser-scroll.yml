@@ -1,0 +1,21 @@
+name: V2.4.1 Intel Chrome scrolling acceptance test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  intel-chrome-scroll:
+    runs-on: macos-26-intel
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run real published RC1 with Chrome target and verify long PNG
+        run: bash qa/intel26-browser-scroll.sh
+      - name: Preserve screenshots and result log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel26-chrome-scroll-evidence
+          path: ${{ runner.temp }}/intel26-browser-scroll/
+          if-no-files-found: ignore
+          retention-days: 7
