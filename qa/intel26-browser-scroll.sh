@@ -79,8 +79,52 @@ for t in [CGEventType.mouseMoved,.leftMouseDown,.leftMouseUp] {
     Thread.sleep(forTimeInterval:0.16)
 }
 SWIFT
-swiftc "$ROOT/click.swift" -framework AppKit -o "$ROOT/click"
-"$ROOT/click" >"$ROOT/click.log" 2>&1
+cat >"$ROOT/ax-press.swift" <<'SWIFT'
+import AppKit
+import ApplicationServices
+import Foundation
+
+let appPID=pid_t(Int(CommandLine.arguments[1]) ?? -1)
+guard appPID>0 else { exit(2) }
+let app=AXUIElementCreateApplication(appPID)
+AXUIElementSetMessagingTimeout(app, 5)
+var traversed=0
+var found=0
+var pressed=false
+func attr(_ element:AXUIElement,_ name:CFString)->CFTypeRef? {
+    var result:CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element,name,&result) == .success else {return nil}
+    return result
+}
+func walk(_ element:AXUIElement,_ depth:Int) {
+    guard depth<16, traversed<1200, !pressed else {return}
+    traversed+=1
+    let fields=[kAXRoleAttribute,kAXTitleAttribute,kAXDescriptionAttribute,kAXHelpAttribute]
+    let labels=fields.compactMap { attr(element,$0) as? String }
+    if labels.joined(separator:" ").contains("Tự cuộn toàn bộ trang") {
+        found+=1
+        let code=AXUIElementPerformAction(element,kAXPressAction as CFString)
+        print("AX_SCROLL_BUTTON_MATCH role="+labels.joined(separator:" | "))
+        print("AX_PRESS_STATUS=\(code.rawValue)")
+        if code == .success {pressed=true; return}
+    }
+    if let children=attr(element,kAXChildrenAttribute as CFString) as? [AXUIElement] {
+        for item in children { walk(item,depth+1) }
+    }
+}
+walk(app,0)
+print("AX_NODES=\(traversed) MATCHES=\(found) PRESSED=\(pressed)")
+exit(pressed ? 0 : 4)
+SWIFT
+swiftc "$ROOT/ax-press.swift" -framework AppKit -o "$ROOT/ax-press"
+if "$ROOT/ax-press" "$APP_PID" >"$ROOT/ax-press.log" 2>&1; then
+  say "AX_SCROLL_BUTTON=PRESS_SUCCESS"
+else
+  say "AX_SCROLL_BUTTON=NOT_PRESSABLE_FALLBACK_QUARTZ"
+  swiftc "$ROOT/click.swift" -framework AppKit -o "$ROOT/click"
+  "$ROOT/click" >"$ROOT/click.log" 2>&1 || true
+fi
+cat "$ROOT/ax-press.log"
 sleep 2
 screencapture -x "$ROOT/scroll-modal.png" 2>/dev/null || true
 osascript -e 'tell application "System Events" to tell process "ScreenShotQuick" to keystroke return' >"$ROOT/start.log" 2>&1 || true
