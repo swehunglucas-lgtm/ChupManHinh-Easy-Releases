@@ -80,10 +80,12 @@ jobs:
             func findAndPress(_ e:AXUIElement)->Bool {
               let desc=value(e,kAXDescriptionAttribute as CFString).map {String(describing:$0)} ?? ""
               if desc=="Tự cuộn toàn bộ trang" {
-                guard let pos=value(e,kAXPositionAttribute as CFString) as? AXValue,
-                      let size=value(e,kAXSizeAttribute as CFString) as? AXValue else {
+                guard let rawPos=value(e,kAXPositionAttribute as CFString),
+                      let rawSize=value(e,kAXSizeAttribute as CFString) else {
                   print("SCROLL_BUTTON_LOCATION_MISSING");return false
                 }
+                let pos=rawPos as! AXValue
+                let size=rawSize as! AXValue
                 var origin=CGPoint.zero
                 var dimensions=CGSize.zero
                 AXValueGetValue(pos,.cgPoint,&origin)
