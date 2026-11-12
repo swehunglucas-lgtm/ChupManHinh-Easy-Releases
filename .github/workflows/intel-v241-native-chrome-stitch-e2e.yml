@@ -1,0 +1,90 @@
+name: V2.4.1 Intel native Chrome page real stitched PNG E2E
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-intel-chrome-scroll:
+    runs-on: macos-26-intel
+    timeout-minutes: 14
+    steps:
+      - name: Verify Intel CPU and download dedicated engine QA binary
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          echo "CPU=$(sysctl -n machdep.cpu.brand_string)"
+          echo "OS=$(sw_vers -productVersion)"
+          ROOT="$RUNNER_TEMP/ssq-intel-chrome"
+          mkdir -p "$ROOT"
+          cd "$ROOT"
+          BASE='https://github.com/swehunglucas-lgtm/ChupManHinh-Easy-Releases/releases/download/qa-v241-scroll-engine-20261112'
+          curl -fLsS --retry 3 "$BASE/SSQ-Intel-Native-Scroll-Engine-QA-v3.zip" -o harness.zip
+          curl -fLsS --retry 3 "$BASE/SHA256SUMS-v3.txt" -o hash.txt
+          test "$(shasum -a 256 harness.zip | cut -d ' ' -f1)" = "$(cut -d ' ' -f1 hash.txt)"
+          unzip -q harness.zip
+          codesign --verify --strict ./SSQIntelScrollNativeHarness
+          test "$(lipo -archs ./SSQIntelScrollNativeHarness)" = x86_64
+          echo 'NATIVE_INTEL_UNCHANGED_ENGINE_HARNESS_VERIFIED'
+      - name: Start a real Chrome window with 105 unique colored data rows
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq-intel-chrome"
+          python3 - "$ROOT/long-page.html" <<'PY'
+          import pathlib,sys
+          rows=[]
+          for i in range(105):
+              r,g,b=((i*37+41)%170+48,(i*71+23)%170+48,(i*53+67)%170+48)
+              bars=''.join(f'<span style="display:inline-block;width:8px;height:91px;margin-right:2px;background:rgba({0 if ((i*917+bit*613+(i>>2)*149)&(1<<(bit%9))) else 255},{0 if ((i*917+bit*613+(i>>2)*149)&(1<<(bit%9))) else 255},{0 if ((i*917+bit*613+(i>>2)*149)&(1<<(bit%9))) else 255},0.5)"></span>' for bit in range(8))
+              rows.append(f'<div style="position:relative;height:108px;width:100%;box-sizing:border-box;background:rgb({r},{g},{b});border-bottom:2px solid rgba(0,0,0,0.2)"><div style="position:absolute;left:20px;top:6px">{bars}</div><strong style="position:absolute;left:250px;top:34px;font:15px monospace;color:black">SSQ-INTEL-ROW-{i:03d} verified page row index {i}</strong></div>')
+          html='<!doctype html><html><head><meta charset="utf-8"><title>SSQ INTEL COLOR ROW LONG PAGE</title><style>html{scroll-behavior:auto;}body{margin:0;padding:0;overflow-y:scroll;}</style></head><body>'+''.join(rows)+'</body></html>'
+          pathlib.Path(sys.argv[1]).write_text(html,encoding='utf-8')
+          PY
+          CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+          test -x "$CHROME"
+          "$CHROME" --user-data-dir="$ROOT/chrome-profile" --no-first-run --no-default-browser-check --disable-background-networking --window-size=1060,810 --window-position=100,80 --new-window "file://$ROOT/long-page.html" >"$ROOT/chrome.log" 2>&1 &
+          echo $! > "$ROOT/chrome.pid"
+          sleep 8
+          swift -e 'import AppKit;import CoreGraphics;for e in (CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]] ?? []) {let n=e[kCGWindowName as String] as? String ?? "";if n.contains("SSQ INTEL COLOR ROW LONG PAGE"){print("CHROME_TEST_WINDOW_FOUND",n,e[kCGWindowBounds as String] ?? "")}}' | tee "$ROOT/window.log"
+          grep -q CHROME_TEST_WINDOW_FOUND "$ROOT/window.log"
+          screencapture -x "$ROOT/browser-before.png"
+      - name: Use unchanged RC1 capture and stitch engine on Chrome; verify every captured frame and image rows
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ssq-intel-chrome"
+          export SSQ_QA_DIR="$ROOT"
+          export SSQ_QA_TARGET_WINDOW='SSQ INTEL COLOR ROW LONG PAGE'
+          python3 - "$ROOT" <<'PY'
+          import pathlib,subprocess,sys
+          root=pathlib.Path(sys.argv[1])
+          with (root/'qa.log').open('wb') as out:
+              try:
+                  p=subprocess.run([str(root/'SSQIntelScrollNativeHarness')],cwd=root,stdout=out,stderr=subprocess.STDOUT,timeout=155)
+              except subprocess.TimeoutExpired:
+                  print('QA_TIMEOUT_155S')
+                  print((root/'qa.log').read_text(errors='replace')[-6000:])
+                  raise SystemExit(1)
+          log=(root/'qa.log').read_text(errors='replace')
+          print(log[-12000:])
+          if p.returncode!=0 or 'QA_FINAL_STATUS=PASS' not in log:
+              raise SystemExit('NOT_PASS: engine did not create a verified multi-frame PNG')
+          assert log.count('ENGINE_CAPTURED_FRAME=')>=3
+          png=root/'REAL-Intel-Scroll-RC1.png'
+          assert png.is_file() and png.stat().st_size>25000
+          print('REAL_INTEL_CHROME_SCROLL_E2E_PASS')
+          PY
+          sips -g pixelWidth -g pixelHeight "$ROOT/REAL-Intel-Scroll-RC1.png"
+          shasum -a 256 "$ROOT/REAL-Intel-Scroll-RC1.png" > "$ROOT/OUTPUT-SHA256.txt"
+      - name: Preserve real page and actual capture for independent review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-v241-chrome-native-scroll-png
+          path: |
+            ${{ runner.temp }}/ssq-intel-chrome/qa.log
+            ${{ runner.temp }}/ssq-intel-chrome/window.log
+            ${{ runner.temp }}/ssq-intel-chrome/browser-before.png
+            ${{ runner.temp }}/ssq-intel-chrome/REAL-Intel-Scroll-RC1.png
+            ${{ runner.temp }}/ssq-intel-chrome/OUTPUT-SHA256.txt
+            ${{ runner.temp }}/ssq-intel-chrome/BUILD-PROVENANCE.txt
+          if-no-files-found: ignore
+          retention-days: 10
