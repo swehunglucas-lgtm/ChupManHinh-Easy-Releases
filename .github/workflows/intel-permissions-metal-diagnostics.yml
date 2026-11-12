@@ -1,0 +1,108 @@
+name: V2.4.1 Intel Metal and permissions diagnostic
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-intel-diagnostics:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-15-intel, macos-26-intel]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    steps:
+      - name: Identify CPU and OS
+        run: |
+          test "$(uname -m)" = x86_64
+          sysctl -n machdep.cpu.brand_string
+          sw_vers -productVersion
+          echo CPU_INTEL_CONFIRMED
+      - name: Compile independent Metal SwiftUI control
+        run: |
+          mkdir -p "$RUNNER_TEMP/check"
+          cat > "$RUNNER_TEMP/check/Probe.swift" <<'SWIFT'
+          import AppKit
+          import SwiftUI
+          import Metal
+          import ApplicationServices
+          import CoreGraphics
+          @main struct Probe {
+            @MainActor static func main() {
+              let mode=CommandLine.arguments[1]
+              if mode=="tcc" {
+                print("SCREEN_GRANTED=\(CGPreflightScreenCaptureAccess())")
+                print("AX_GRANTED=\(AXIsProcessTrusted())")
+                return
+              }
+              if mode=="metal" {
+                print("METAL_DEVICE=\(MTLCreateSystemDefaultDevice()?.name ?? "none")")
+                return
+              }
+              let app=NSApplication.shared
+              app.setActivationPolicy(.regular)
+              let win=NSWindow(contentRect:NSRect(x:100,y:100,width:450,height:330),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+              if mode=="canvas" {
+                win.contentView=NSHostingView(rootView:Canvas { ctx,size in
+                  ctx.fill(Path(ellipseIn:CGRect(x:30,y:30,width:100,height:100)),with:.color(.green))
+                })
+              } else {
+                win.contentView=NSHostingView(rootView:Text("Independent SwiftUI smoke"))
+              }
+              win.makeKeyAndOrderFront(nil)
+              DispatchQueue.main.asyncAfter(deadline:.now()+2) { app.terminate(nil) }
+              print("CONTROL_STARTED_\(mode)")
+              fflush(stdout)
+              app.run()
+            }
+          }
+          SWIFT
+          swiftc -parse-as-library "$RUNNER_TEMP/check/Probe.swift" -o "$RUNNER_TEMP/check/Probe" -framework AppKit -framework SwiftUI -framework Metal
+      - name: Independent GPU and TCC control evidence
+        run: |
+          set +e
+          for mode in metal tcc text canvas; do
+            "$RUNNER_TEMP/check/Probe" "$mode" >"$RUNNER_TEMP/check/$mode.log" 2>&1
+            code=$?
+            echo "MODE_$mode EXIT=$code"
+            tail -8 "$RUNNER_TEMP/check/$mode.log"
+            echo "$code" >"$RUNNER_TEMP/check/$mode.exit"
+          done
+          test "$(cat "$RUNNER_TEMP/check/text.exit")" = 0
+          echo GRAPHICS_PROBE_COMPLETE
+      - name: Verify public RC1 and test application Metal behavior
+        run: |
+          set -e
+          BASE='https://github.com/swehunglucas-lgtm/ChupManHinh-Easy-Releases/releases/download/v2.4.1-intel-rc1'
+          curl -fLsS --retry 3 "$BASE/ChupManHinh-Easy-v2.4.1-macOS-Universal.dmg" -o "$RUNNER_TEMP/check/app.dmg"
+          curl -fLsS --retry 3 "$BASE/SHA256SUMS-v2.4.1-intel-rc1.txt" -o "$RUNNER_TEMP/check/SHA256SUMS"
+          EXPECTED="$(cut -d ' ' -f1 "$RUNNER_TEMP/check/SHA256SUMS")"
+          test "$EXPECTED" = "$(shasum -a 256 "$RUNNER_TEMP/check/app.dmg" | cut -d ' ' -f1)"
+          mkdir -p "$RUNNER_TEMP/check/mount" "$HOME/Applications"
+          hdiutil attach "$RUNNER_TEMP/check/app.dmg" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/check/mount" >/dev/null
+          ditto "$RUNNER_TEMP/check/mount/Chup Man Hinh Nhanh.app" "$HOME/Applications/Chup Man Hinh Nhanh.app"
+          hdiutil detach "$RUNNER_TEMP/check/mount" -quiet
+          codesign --verify --deep --strict "$HOME/Applications/Chup Man Hinh Nhanh.app"
+          echo RELEASE_ASSET_VERIFIED
+          set +e
+          BIN="$HOME/Applications/Chup Man Hinh Nhanh.app/Contents/MacOS/ScreenShotQuick"
+          "$BIN" --glass-preview >"$RUNNER_TEMP/check/glass.log" 2>&1 &
+          pid=$!
+          sleep 6
+          if kill -0 "$pid" 2>/dev/null; then echo APP_GLASS_ALIVE; else echo APP_GLASS_FAILED; fi
+          tail -10 "$RUNNER_TEMP/check/glass.log"
+          /usr/sbin/screencapture -x "$RUNNER_TEMP/check/screen.png" 2>"$RUNNER_TEMP/check/screencapture.log"
+          echo "RUNNER_SCREENSHOT_EXIT=$?"
+          kill -TERM "$pid" 2>/dev/null
+          echo "NO_APP_TCC_OR_AUTO_SCROLL_PASS_INFERRED"
+      - name: Save diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-metal-tcc-${{ matrix.image }}
+          path: |
+            ${{ runner.temp }}/check/*.log
+            ${{ runner.temp }}/check/*.exit
+            ${{ runner.temp }}/check/screen.png
+          if-no-files-found: ignore
+          retention-days: 7
